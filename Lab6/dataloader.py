@@ -7,7 +7,7 @@ import torchvision.transforms as transforms
 
 class ICLEVR_dataset(Dataset):
     def __init__(self, root, mode = 'train'):
-        self.root = '/home/pp037/DL/Lab6'
+        self.root = root
         self.mode = mode
         self.images, self.labels = self.get_data()
 
@@ -29,7 +29,7 @@ class ICLEVR_dataset(Dataset):
         return image, label
 
     def get_data(self):
-        label_dict = json.load(open("/home/pp037/DL/Lab6/objects.json"))
+        label_dict = json.load(open(os.path.join(self.root, "objects.json")))
         data_dict = json.load(open(os.path.join(self.root, self.mode + ".json")))
 
         images = list(data_dict.keys())
@@ -37,7 +37,7 @@ class ICLEVR_dataset(Dataset):
 
         image_list, label_list = [], []
         for i in range(len(labels)):
-            image_list.append("/home/pp037/DL/Lab6/iclevr/iclevr/" + images[i])
+            image_list.append(os.path.join(self.root, "iclevr", "iclevr", images[i]))
 
             onehot_label = np.zeros(24, dtype = np.float32)
             for j in range(len(labels[i])):

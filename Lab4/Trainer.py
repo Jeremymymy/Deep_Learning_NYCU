@@ -33,33 +33,30 @@ def kl_criterion(mu, logvar, batch_size):   # KL divergence 是用於衡量兩�
     return KLD
 
 class kl_annealing():
-    def __init__(self, args, current_epoch = 0, iters_per_cycle = 0, current_pos = 0):
-        # TODO
+    def __init__(self, args, current_epoch = 0):
         self.args = args
         self.current_epoch = current_epoch
         self.iters_per_cycle = args.num_epoch / args.kl_anneal_cycle
-        self.current_pos = current_pos
         self.beta = 0.0
-        
+        self._update_beta()   # 依 current_epoch 先算好 beta（也支援從 checkpoint 續訓）
+
     def update(self):
-        # TODO
         self.current_epoch += 1
-        self.current_pos = self.current_epoch % self.iters_per_cycle    
-        
+        self._update_beta()   # beta 每個 epoch 才更新一次
+
     def get_beta(self):
-        # TODO
+        return self.beta      # 純讀取、無副作用，可被 per-batch / per-frame 安全呼叫
+
+    def _update_beta(self):  # 依目前 epoch 計算 beta
         if self.args.kl_anneal_type == 'Cyclical':
-            self.beta = min(self.current_pos * self.frange_cycle_linear(), 1.0)
+            current_pos = self.current_epoch % self.iters_per_cycle
+            self.beta = min(current_pos * self.frange_cycle_linear(), 1.0)
         elif self.args.kl_anneal_type == 'Monotonic':
-            self.args.kl_anneal_ratio += 0.1
-            self.beta = min(self.args.kl_anneal_ratio, 1.0)
+            self.beta = min(self.current_epoch * 0.1, 1.0)   # 從 0 線性升到 1（約第 10 epoch 達 1）
         else:
             self.beta = 1.0
-        
-        return self.beta
 
     def frange_cycle_linear(self, start = 0.0, stop = 1.0, ratio = 1):    # 計算週期性線性範圍函式的值，該函式在週期內根據位置逐漸變化，並可通過參數進行調整
-        # TODO
         beta_rate = (stop - start) / (self.iters_per_cycle-1)*ratio
         return beta_rate
         
@@ -106,11 +103,11 @@ class VAE_Model(nn.Module):
         for i in range(self.args.num_epoch):
             total_loss = 0
             train_loader = self.train_dataloader()
-            adapt_TeacherForcing = True if random.random() < self.tfr else False    # 根據機率決定是否啟用 Teacher forcing
             
             for (img, label) in (pbar := tqdm(train_loader, ncols=120)):
                 img = img.to(self.args.device)
                 label = label.to(self.args.device)
+                adapt_TeacherForcing = True if random.random() < self.tfr else False    # 每個 batch 各自決定是否啟用 Teacher forcing
                 loss = self.training_one_step(img, label, adapt_TeacherForcing)
                 total_loss += loss
                 beta = self.kl_annealing.get_beta()
@@ -207,7 +204,7 @@ class VAE_Model(nn.Module):
             psnr_list['PSNR'].append(psnr)
             total_psnr += psnr
         
-        avg_psnr = total_psnr / self.val_vi_len
+        avg_psnr = total_psnr / (self.val_vi_len - 1)
         print(avg_psnr)
         if avg_psnr > self.best_psnr:
             self.best_psnr = avg_psnr
@@ -258,7 +255,7 @@ class VAE_Model(nn.Module):
     def teacher_forcing_ratio_update(self):
         # TODO
         if self.current_epoch >= self.args.tfr_sde: # 到達了可以開始調整的時間點
-            self.tfr = max(0, self.tfr - self.args.tfr_sde) # 隨著訓練的進行，逐步降低 Teacher Forcing 比例，越來越少依賴真實目標輸出，而更多地自行生成
+            self.tfr = max(0, self.tfr - self.args.tfr_d_step) # 隨著訓練的進行，逐步降低 Teacher Forcing 比例，越來越少依賴真實目標輸出，而更多地自行生成
 
     
     def tqdm_bar(self, mode, pbar, loss, lr):
@@ -269,7 +266,7 @@ class VAE_Model(nn.Module):
     def save(self, path):
         torch.save({
             "state_dict": self.state_dict(),
-            "optimizer": self.state_dict(),  
+            "optimizer": self.optim.state_dict(),
             "lr"        : self.scheduler.get_last_lr()[0],
             "tfr"       :   self.tfr,
             "last_epoch": self.current_epoch
